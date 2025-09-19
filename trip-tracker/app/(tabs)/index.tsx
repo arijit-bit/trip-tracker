@@ -40,6 +40,9 @@ export default function TripTrackerScreen() {
 
   const mapRef = useRef<MapView | null>(null);
   const locationWatcher = useRef<Location.LocationSubscription | null>(null);
+  
+  // ✅ FIX: Use a ref to track the current tracking state
+  const isTrackingRef = useRef(false);
 
   // Calculate distance between two coordinates
   const calculateDistance = (coord1: LocationCoords, coord2: LocationCoords): number => {
@@ -74,11 +77,13 @@ export default function TripTrackerScreen() {
       (loc) => {
         setLocation(loc);
 
-        if (isTracking) {
+        // ✅ FIX: Use the ref value instead of state
+        if (isTrackingRef.current) {
           const newPoint: LocationCoords = {
             latitude: loc.coords.latitude,
             longitude: loc.coords.longitude,
             timestamp: loc.timestamp,
+            speed: loc.coords.speed || 0,
           };
 
           setCurrentPath(prev => {
@@ -87,20 +92,26 @@ export default function TripTrackerScreen() {
               const distanceIncrement = calculateDistance(lastPoint, newPoint);
               const timeDiff = (newPoint.timestamp - lastPoint.timestamp) / 1000;
 
-              // ✅ Update distance safely
+              // Update distance
               setDistance(prevDistance => prevDistance + distanceIncrement);
 
-              // ✅ Calculate speed manually (m/s)
-              if (timeDiff > 0) {
-                setSpeed(distanceIncrement / timeDiff);
+              // Calculate speed (m/s) or use GPS speed
+              if (timeDiff > 0 && distanceIncrement > 0.5) { // Only update if moved at least 0.5m
+                const calculatedSpeed = distanceIncrement / timeDiff;
+                setSpeed(calculatedSpeed);
+              } else if (loc.coords.speed !== null && loc.coords.speed !== undefined) {
+                // Use GPS speed as fallback
+                setSpeed(Math.max(0, loc.coords.speed));
               }
+            } else if (loc.coords.speed !== null && loc.coords.speed !== undefined) {
+              // Set initial speed from GPS if available
+              setSpeed(Math.max(0, loc.coords.speed));
             }
             return [...prev, newPoint];
           });
         }
       }
     );
-
   };
 
   // Start trip tracking
@@ -110,7 +121,10 @@ export default function TripTrackerScreen() {
       return;
     }
 
+    // ✅ FIX: Update both state and ref
     setIsTracking(true);
+    isTrackingRef.current = true;
+    
     setTripStartTime(Date.now());
     setCurrentPath([{
       latitude: location.coords.latitude,
@@ -119,13 +133,17 @@ export default function TripTrackerScreen() {
       speed: location.coords.speed ? Math.max(0, location.coords.speed) : 0,
     }]);
     setDistance(0);
+    setSpeed(location.coords.speed ? Math.max(0, location.coords.speed) : 0);
   };
 
   // Stop trip tracking and save
   const stopTrip = async () => {
     if (!isTracking || !tripStartTime) return;
 
+    // ✅ FIX: Update both state and ref
     setIsTracking(false);
+    isTrackingRef.current = false;
+    
     const endTime = Date.now();
     const duration = (endTime - tripStartTime) / 1000; // in seconds
     const averageSpeed = duration > 0 ? distance / duration : 0;
@@ -160,6 +178,7 @@ export default function TripTrackerScreen() {
     setCurrentPath([]);
     setTripStartTime(null);
     setDistance(0);
+    setSpeed(0);
   };
 
   // Format duration
@@ -274,6 +293,11 @@ export default function TripTrackerScreen() {
             <Text style={styles.text}>
               Points: {currentPath.length}
             </Text>
+            {currentPath.length === 1 && (
+              <Text style={styles.smallText}>
+                Move to start recording distance...
+              </Text>
+            )}
           </>
         )}
       </View>
@@ -360,5 +384,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginVertical: 3,
+  },
+  smallText: {
+    color: '#aaa',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 5,
+    fontStyle: 'italic',
   },
 });
